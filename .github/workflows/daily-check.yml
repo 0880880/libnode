@@ -31,9 +31,8 @@ jobs:
         uses: EndBug/add-and-commit@v9
         if: ${{ env.NOTHING_TO_DO == 'false' }}
         with:
-          author_name: Mahdi Sharifi
+          author_name: 0880880
           message: "Add ${{ env.TAG }}"
-          author_email: devraymondsh@gmail.com
           github_token: ${{ secrets.ACCESS_TOKEN }}
 
       - name: Release
