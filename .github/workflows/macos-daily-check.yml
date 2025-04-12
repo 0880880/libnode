@@ -45,7 +45,13 @@ jobs:
 
           brew install git node ninja nasm ccache
 
-      - name: Run the script
+      - name: Set environment for static build
+        run: |
+          # Set environment variables for static build
+          export STATIC_BUILD=1
+          export NODEJS_BUILD_STATIC=1
+
+      - name: Run the script to build statically
         env:
           CC: "gcc"
           CXX: "g++"
@@ -63,7 +69,7 @@ jobs:
         run: |
           cd node/out/Release
           ln libnode.* libnode.dylib
-          tar -cJf "libnode-${{ matrix.arch }}-macos.tar.xz" libnode.* node
+          tar -cJf "libnode-static-${{ matrix.arch }}-macos.tar.xz" libnode.* node
 
       - name: Upload binaries to release
         uses: svenstaro/upload-release-action@v2
@@ -71,4 +77,4 @@ jobs:
           overwrite: true
           tag: ${{ github.ref }}
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: node/out/Release/libnode-${{ matrix.arch }}-macos.tar.xz
+          file: node/out/Release/libnode-static-${{ matrix.arch }}-macos.tar.xz
