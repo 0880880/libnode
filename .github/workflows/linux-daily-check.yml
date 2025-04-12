@@ -36,7 +36,13 @@ jobs:
           apt-get update
           apt-get install --yes git nodejs python3 python3-pip gcc g++ make nasm ccache linux-libc-dev linux-libc-dev-arm64-cross binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
 
-      - name: Run the script
+      - name: Set environment for static build
+        run: |
+          # Set environment variables to trigger static build
+          export STATIC_BUILD=1
+          export NODEJS_BUILD_STATIC=1
+
+      - name: Run the script to build statically
         env:
           ARCH: ${{ matrix.arch }}
           CC: "${{ matrix.is_arm && 'aarch64-linux-gnu-gcc' || 'gcc' }}"
@@ -60,7 +66,7 @@ jobs:
         run: |
           cd node/out/Release
           ln libnode.so.* libnode.so
-          tar -cJf "libnode-${{ matrix.arch }}-linux.tar.xz" libnode.* node
+          tar -cJf "libnode-static-${{ matrix.arch }}-linux.tar.xz" libnode.* node
 
       - name: Upload binaries to release
         uses: svenstaro/upload-release-action@v2
@@ -68,4 +74,4 @@ jobs:
           overwrite: true
           tag: ${{ github.ref }}
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: node/out/Release/libnode-${{ matrix.arch }}-linux.tar.xz
+          file: node/out/Release/libnode-static-${{ matrix.arch }}-linux.tar.xz
