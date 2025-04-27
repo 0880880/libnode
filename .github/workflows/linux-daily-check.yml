@@ -16,7 +16,7 @@ jobs:
           - arch: arm64
             is_arm: true
     container:
-      image: quay.io/pypa/manylinux_2_28_x86_64:latest
+      image: image: ${{ matrix.is_arm && 'quay.io/pypa/manylinux_2_28_aarch64:latest' || 'quay.io/pypa/manylinux_2_28_x86_64:latest' }}
     steps:
       - uses: actions/checkout@v4
 
