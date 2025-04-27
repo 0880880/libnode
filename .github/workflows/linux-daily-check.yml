@@ -16,7 +16,7 @@ jobs:
           - arch: arm64
             is_arm: true
     container:
-      image: ubuntu:devel
+      image: quay.io/pypa/manylinux_2_28_x86_64:latest
     steps:
       - uses: actions/checkout@v4
 
