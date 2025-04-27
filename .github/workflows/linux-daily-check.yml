@@ -32,41 +32,31 @@ jobs:
 
       - name: Install building tools
         run: |
-          # Update base OS and enable EPEL
+          # refresh base OS and enable a few extras
           dnf update -y
           dnf install -y epel-release
 
-          # Install core build tools
-          dnf groupinstall -y "Development Tools"        # :contentReference[oaicite:0]{index=0}
-          dnf install -y ccache nasm python3 python3-pip
+          # get a full C/C++ toolchain plus python, nasm, ccache, etc.
+          dnf groupinstall -y "Development Tools"                          # :contentReference[oaicite:0]{index=0}
+          dnf install -y ccache nasm python3 python3-pip git curl
 
-          # Add NodeSource RPM repo for Node.js 21.x and install Node.js
-          curl -sL https://rpm.nodesource.com/setup_21.x | bash -  # :contentReference[oaicite:1]{index=1}
-          dnf install -y git nodejs
-
-          # Cross‐compile toolchain for aarch64
-          dnf install -y \
-            glibc-devel \
-            glibc-devel.aarch64 \
-            binutils-aarch64-linux-gnu \
-            gcc-aarch64-linux-gnu \
-            g++-aarch64-linux-gnu
+          # Node.js 21.x from NodeSource
+          curl -sL https://rpm.nodesource.com/setup_21.x | bash -       # :contentReference[oaicite:1]{index=1}
+          dnf install -y nodejs
 
       - name: Run the script
         env:
           ARCH: ${{ matrix.arch }}
-          CC: ${{ matrix.is_arm && 'aarch64-linux-gnu-gcc' || 'gcc' }}
-          CXX: ${{ matrix.is_arm && 'aarch64-linux-gnu-g++' || 'g++' }}
-          CC_host: ${{ matrix.is_arm && 'gcc' || null }}
-          CXX_host: ${{ matrix.is_arm && 'g++' || null }}
-          AS: ${{ matrix.is_arm && 'aarch64-linux-gnu-as' || null }}
-          LD: ${{ matrix.is_arm && 'aarch64-linux-gnu-ld' || null }}
-          RANLIB: ${{ matrix.is_arm && 'aarch64-linux-gnu-ranlib' || null }}
+          CC:   ${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-gcc' || 'gcc' }}
+          CXX:  ${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-g++' || 'g++' }}
+          AS:   ${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-as' || '' }}
+          LD:   ${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-ld' || '' }}
+          RANLIB: ${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-ranlib' || '' }}
         run: |
-          export CCACHE_COMPRESS="true"
+          export CCACHE_COMPRESS=true
           export CCACHE_BASEDIR="$GITHUB_WORKSPACE"
           export CCACHE_DIR="$CCACHE_BASEDIR/.ccache"
-          export PATH="/usr/lib64/ccache:/usr/local/opt/ccache/libexec:$PATH"
+          export PATH="/usr/lib64/ccache:$PATH"
           mkdir -p "$CCACHE_DIR"
 
           node index.js
@@ -81,7 +71,7 @@ jobs:
         uses: svenstaro/upload-release-action@v2
         with:
           overwrite: true
-          tag: ${{ github.ref }}
+          tag:        ${{ github.ref }}
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: node/out/Release/libnode-${{ matrix.arch }}-linux.tar.xz
+          file:       node/out/Release/libnode-${{ matrix.arch }}-linux.tar.xz
           
