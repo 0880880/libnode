@@ -36,6 +36,18 @@ jobs:
           apt-get update
           apt-get install --yes git nodejs python3 python3-pip gcc g++ make nasm ccache linux-libc-dev linux-libc-dev-arm64-cross binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
 
+      
+      - name: Prepare manylinux2_28 sysroot
+        run: |
+          # Pull the official manylinux2_28 image
+          docker pull quay.io/pypa/manylinux_2_28_x86_64
+
+          # Create a temp container and copy out /usr (glibc 2.28 tree)
+          docker create --name tmp_manylinux quay.io/pypa/manylinux_2_28_x86_64
+          mkdir -p /opt/manylinux2_28/sysroot
+          docker cp tmp_manylinux:/usr /opt/manylinux2_28/sysroot
+          docker rm tmp_manylinux
+
       - name: Run the script
         env:
           ARCH: ${{ matrix.arch }}
