@@ -68,6 +68,24 @@ jobs:
           export CCACHE_DIR="$CCACHE_BASEDIR/.ccache"
           export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
           mkdir -p "$CCACHE_DIR"
+          if [ ! -d "${SYSROOT}/usr" ]; then
+            echo "Sysroot missing at ${SYSROOT}" >&2
+            exit 1
+          fi
+
+          # tell GCC to use the sysroot's headers *instead* of the host's
+          SYS_CXX_INC=$(ls ${SYSROOT}/usr/include/c++/)
+          export CXXFLAGS="$CXXFLAGS -nostdinc++ \
+            -isystem ${SYSROOT}/usr/include/c++/${SYS_CXX_INC} \
+            -isystem ${SYSROOT}/usr/include"
+
+          # same for C headers
+          export CFLAGS="$CFLAGS -nostdinc \
+            -isystem ${SYSROOT}/usr/include"
+
+          # and point the linker at the sysroot libs
+          export LDFLAGS="$LDFLAGS \
+            -L${SYSROOT}/usr/lib64 -L${SYSROOT}/usr/lib"
 
           node index.js
 
