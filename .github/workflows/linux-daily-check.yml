@@ -34,11 +34,11 @@ jobs:
         run: |
           # Install Node.js
           curl -sL https://rpm.nodesource.com/setup_21.x | bash -
-          microdnf install -y nodejs git python3 python3-pip gcc gcc-c++ make nasm ccache
+          dnf install -y nodejs git python3 python3-pip gcc gcc-c++ make nasm ccache
 
           # For cross-compiling to ARM64 if we're on x86_64
           if [ "${{ matrix.arch }}" = "arm64" ] && [ "$(uname -m)" = "x86_64" ]; then
-            microdnf install -y gcc-aarch64-linux-gnu gcc-c++-aarch64-linux-gnu binutils-aarch64-linux-gnu
+            dnf install -y gcc-aarch64-linux-gnu gcc-c++-aarch64-linux-gnu binutils-aarch64-linux-gnu
           fi
 
       - name: Run the script
