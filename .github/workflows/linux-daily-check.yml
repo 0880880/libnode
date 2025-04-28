@@ -34,7 +34,7 @@ jobs:
         run: |
           apt-get install --yes ca-certificates curl gnupg && curl -sL https://deb.nodesource.com/setup_21.x | bash -
           apt-get update
-          apt-get install --yes git nodejs python3 python3-pip gcc g++ make nasm ccache linux-libc-dev linux-libc-dev-arm64-cross binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          apt-get install --yes docker.io git nodejs python3 python3-pip gcc g++ make nasm ccache linux-libc-dev linux-libc-dev-arm64-cross binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
 
       
       - name: Prepare manylinux2_28 sysroot
@@ -43,7 +43,7 @@ jobs:
           docker pull quay.io/pypa/manylinux_2_28_x86_64:latest
 
           # Create a temp container and copy out /usr (glibc 2.28 tree)
-          docker create --name tmp_manylinux quay.io/pypa/manylinux_2_28_x86_64
+          docker create --name tmp_manylinux quay.io/pypa/manylinux_2_28_x86_64:latest
           mkdir -p /opt/manylinux2_28/sysroot
           docker cp tmp_manylinux:/usr /opt/manylinux2_28/sysroot
           docker rm tmp_manylinux
