@@ -40,10 +40,10 @@ jobs:
       - name: Prepare manylinux2_28 sysroot
         run: |
           # Pull the official manylinux2_28 image
-          docker pull quay.io/pypa/manylinux_2_28_x86_64
+          docker pull quay.io/pypa/manylinux_2_28_x86_64:latest
 
           # Create a temp container and copy out /usr (glibc 2.28 tree)
-          docker create --name tmp_manylinux quay.io/pypa/manylinux_2_28_x86_64
+          docker create --name tmp_manylinux quay.io/pypa/manylinux_2_28_x86_64:latest
           mkdir -p /opt/manylinux2_28/sysroot
           docker cp tmp_manylinux:/usr /opt/manylinux2_28/sysroot
           docker rm tmp_manylinux
