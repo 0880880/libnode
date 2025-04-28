@@ -1,110 +1,49 @@
-name: Linux
+name: Daily check
 
 on:
-  push:
-    tags:
-      - "v*"
+  schedule:
+    - cron: "0 8 * * *"
   workflow_dispatch:
 
+env:
+  TAG: v0
+  NOTHING_TO_DO: true
+
 jobs:
-  update:
+  check:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        arch: [amd64, arm64]
-        include:
-          - arch: arm64
-            is_arm: true
-    container:
-      image: ubuntu:devel
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup ccache
-        uses: actions/cache@v4
         with:
-          path: .ccache
-          save-always: true
-          key: ${{ github.workflow }}-${{ matrix.arch }}-${{ hashFiles('**/version.txt') }}
-          restore-keys: |
-            ${{ github.workflow }}-${{ matrix.arch }}-${{ hashFiles('**/version.txt') }}
-            ${{ github.workflow }}-${{ matrix.arch }}-
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: true
 
       - name: Install building tools
         run: |
-          apt-get install --yes ca-certificates curl gnupg && curl -sL https://deb.nodesource.com/setup_21.x | bash -
-          apt-get update
-          apt-get install --yes docker.io git nodejs python3 python3-pip gcc g++ make nasm ccache linux-libc-dev linux-libc-dev-arm64-cross binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          sudo apt-get install --yes ca-certificates curl gnupg && curl -sL https://deb.nodesource.com/setup_21.x | sudo bash -
+          sudo apt-get update && sudo apt-get install --yes nodejs
 
-      
-      - name: Prepare manylinux2_28 sysroot
-        run: |
-          # 1) pull the image
-          docker pull quay.io/pypa/manylinux_2_28_x86_64
+      - name: Run the check script
+        run: node daily-check.js
 
-          # 2) spin up a throw-away container, install dev headers, then sleep
-          container=$(
-            docker create quay.io/pypa/manylinux_2_28_x86_64 bash -lc "\
-              microdnf install -y glibc-headers glibc-devel libstdc++-devel kernel-headers \
-              && sleep infinity"
-          )
-
-          # 3) copy out /usr (headers + libs) into your sysroot
-          mkdir -p /opt/manylinux2_28/sysroot
-          docker cp $container:/usr /opt/manylinux2_28/sysroot
-          docker rm -f $container
-
-      - name: Run the script
-        env:
-          ARCH: ${{ matrix.arch }}
-          SYSROOT: /opt/manylinux2_28/sysroot
-          CC: "${{ matrix.is_arm && 'aarch64-linux-gnu-gcc' || 'gcc' }}"
-          CXX: "${{ matrix.is_arm && 'aarch64-linux-gnu-g++' || 'g++' }}"
-          CFLAGS: "--sysroot=${SYSROOT} -O2 -fPIC"
-          CXXFLAGS: "--sysroot=${SYSROOT} -O2 -fPIC -std=c++20"
-          LDFLAGS: "--sysroot=${SYSROOT} -Wl,--as-needed"
-        run: |
-          # ensure sysroot is available (if you're in a manylinux2_28 container, this already exists)
-          if [ ! -d "$SYSROOT" ]; then
-            echo "Sysroot not found at $SYSROOT" >&2
-            exit 1
-          fi
-          export CCACHE_COMPRESS="true"
-          export CCACHE_BASEDIR="$GITHUB_WORKSPACE"
-          export CCACHE_DIR="$CCACHE_BASEDIR/.ccache"
-          export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
-          mkdir -p "$CCACHE_DIR"
-          if [ ! -d "${SYSROOT}/usr" ]; then
-            echo "Sysroot missing at ${SYSROOT}" >&2
-            exit 1
-          fi
-
-          # tell GCC to use the sysroot's headers *instead* of the host's
-          SYS_CXX_INC=$(ls ${SYSROOT}/usr/include/c++/)
-          export CXXFLAGS="$CXXFLAGS -nostdinc++ \
-            -isystem ${SYSROOT}/usr/include/c++/${SYS_CXX_INC} \
-            -isystem ${SYSROOT}/usr/include"
-
-          # same for C headers
-          export CFLAGS="$CFLAGS -nostdinc \
-            -isystem ${SYSROOT}/usr/include"
-
-          # and point the linker at the sysroot libs
-          export LDFLAGS="$LDFLAGS \
-            -L${SYSROOT}/usr/lib64 -L${SYSROOT}/usr/lib"
-
-          node index.js
-
-      - name: Create archive
-        run: |
-          cd node/out/Release
-          ln libnode.so.* libnode.so
-          tar -cJf "libnode-${{ matrix.arch }}-linux.tar.xz" libnode.* node
-
-      - name: Upload binaries to release
-        uses: svenstaro/upload-release-action@v2
+      - name: Commit
+        uses: EndBug/add-and-commit@v9
+        if: ${{ env.NOTHING_TO_DO == 'false' }}
         with:
-          overwrite: true
-          tag: ${{ github.ref }}
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: node/out/Release/libnode-${{ matrix.arch }}-linux.tar.xz
+          author_name: Mahdi Sharifi
+          message: "Add ${{ env.TAG }}"
+          author_email: devraymondsh@gmail.com
+          github_token: ${{ secrets.ACCESS_TOKEN }}
+
+      - name: Release
+        uses: ncipollo/release-action@v1
+        if: ${{ env.NOTHING_TO_DO == 'false' }}
+        with:
+          commit: main
+          allowUpdates: true
+          tag: ${{ env.TAG }}
+          generateReleaseNotes: false
+          name: libnode ${{ env.TAG }}
+          token: ${{ secrets.ACCESS_TOKEN }}
+          body: "Changelog: https://github.com/nodejs/node/releases/tag/${{ env.TAG }}"
