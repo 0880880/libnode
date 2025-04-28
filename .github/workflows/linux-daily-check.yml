@@ -16,7 +16,7 @@ jobs:
           - arch: arm64
             is_arm: true
     container:
-      image: ${{ matrix.is_arm && 'quay.io/pypa/manylinux_2_28_aarch64:latest' || 'quay.io/pypa/manylinux_2_28_x86_64:latest' }}
+      image: ubuntu:devel
     steps:
       - uses: actions/checkout@v4
 
@@ -32,31 +32,29 @@ jobs:
 
       - name: Install building tools
         run: |
-          # refresh base OS and enable a few extras
-          dnf update -y
-          dnf install -y epel-release
-
-          # get a full C/C++ toolchain plus python, nasm, ccache, etc.
-          dnf groupinstall -y "Development Tools"                          # :contentReference[oaicite:0]{index=0}
-          dnf install -y ccache nasm python3 python3-pip git curl
-
-          # Node.js 21.x from NodeSource
-          curl -sL https://rpm.nodesource.com/setup_21.x | bash -       # :contentReference[oaicite:1]{index=1}
-          dnf install -y nodejs
+          apt-get install --yes ca-certificates curl gnupg && curl -sL https://deb.nodesource.com/setup_21.x | bash -
+          apt-get update
+          apt-get install --yes git nodejs python3 python3-pip gcc g++ make nasm ccache linux-libc-dev linux-libc-dev-arm64-cross binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
 
       - name: Run the script
         env:
           ARCH: ${{ matrix.arch }}
-          CC:   ${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-gcc' || 'gcc' }}
-          CXX:  ${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-g++' || 'g++' }}
-          AS:   ${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-as' || '' }}
-          LD:   ${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-ld' || '' }}
-          RANLIB: ${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-ranlib' || '' }}
+          SYSROOT: /opt/manylinux2_28/sysroot
+          CC: "${{ matrix.is_arm && 'aarch64-linux-gnu-gcc' || 'gcc' }}"
+          CXX: "${{ matrix.is_arm && 'aarch64-linux-gnu-g++' || 'g++' }}"
+          CFLAGS: "--sysroot=${SYSROOT} -O2 -fPIC"
+          CXXFLAGS: "--sysroot=${SYSROOT} -O2 -fPIC -std=c++20"
+          LDFLAGS: "--sysroot=${SYSROOT} -Wl,--as-needed"
         run: |
-          export CCACHE_COMPRESS=true
+          # ensure sysroot is available (if you're in a manylinux2_28 container, this already exists)
+          if [ ! -d "$SYSROOT" ]; then
+            echo "Sysroot not found at $SYSROOT" >&2
+            exit 1
+          fi
+          export CCACHE_COMPRESS="true"
           export CCACHE_BASEDIR="$GITHUB_WORKSPACE"
           export CCACHE_DIR="$CCACHE_BASEDIR/.ccache"
-          export PATH="/usr/lib64/ccache:$PATH"
+          export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
           mkdir -p "$CCACHE_DIR"
 
           node index.js
@@ -71,7 +69,6 @@ jobs:
         uses: svenstaro/upload-release-action@v2
         with:
           overwrite: true
-          tag:        ${{ github.ref }}
+          tag: ${{ github.ref }}
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file:       node/out/Release/libnode-${{ matrix.arch }}-linux.tar.xz
-          
+          file: node/out/Release/libnode-${{ matrix.arch }}-linux.tar.xz
