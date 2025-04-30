@@ -69,5 +69,5 @@ if (process.platform == "win32") {
     OS,
     ...extraArgs,
   ]);
-  await spawnAsync("make", [`-j${threadCount}`]);
+  await spawnAsync("make", [`-j${threadCount}`, 'V=1']);
 }
