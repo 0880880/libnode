@@ -57,11 +57,12 @@ jobs:
         shell: scl enable gcc-toolset-12 -- bash {0}
         env:
           ARCH: ${{ matrix.arch }}
-          # Inside 'scl enable gcc-toolset-11', gcc/g++ point to the toolset versions
-          CC: "${{ matrix.is_arm && 'aarch64-linux-gnu-gcc' || 'gcc' }}"
-          CXX: "${{ matrix.is_arm && 'aarch64-linux-gnu-g++' || 'g++' }}"
+          CC: "${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-gcc' || 'gcc' }}"
+          CXX: "${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-g++' || 'g++' }}"
           CFLAGS: "-O2 -fPIC"
-          CXXFLAGS: "-O2 -fPIC -std=c++20 -Wno-deprecated-declarations"
+          # ---> CRITICAL: Ensure -std=c++20 is NOT here <---
+          # ---> Include the fix for OpenSSL deprecation warnings <---
+          CXXFLAGS: "-O2 -fPIC -Wno-error=deprecated-declarations"
           LDFLAGS: "-Wl,--as-needed"
           # CCACHE setup
           CCACHE_COMPRESS: "true"
