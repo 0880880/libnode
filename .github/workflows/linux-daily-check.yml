@@ -61,7 +61,7 @@ jobs:
           CC: "${{ matrix.is_arm && 'aarch64-linux-gnu-gcc' || 'gcc' }}"
           CXX: "${{ matrix.is_arm && 'aarch64-linux-gnu-g++' || 'g++' }}"
           CFLAGS: "-O2 -fPIC"
-          CXXFLAGS: "-O2 -fPIC -std=c++20"
+          CXXFLAGS: "-O2 -fPIC -std=c++17"
           LDFLAGS: "-Wl,--as-needed"
           # CCACHE setup
           CCACHE_COMPRESS: "true"
