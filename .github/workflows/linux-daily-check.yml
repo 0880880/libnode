@@ -37,7 +37,7 @@ jobs:
           # Install EPEL (already installed according to logs, but good practice)
           dnf install -y epel-release
           # Install GCC Toolset 11 for a modern compiler
-          dnf install -y gcc-toolset-11-gcc gcc-toolset-11-gcc-c++ gcc-toolset-11-binutils
+          dnf install -y gcc-toolset-12-gcc gcc-toolset-12-gcc-c++ gcc-toolset-12-binutils
           # Install other required tools
           dnf install -y make git python3 python3-pip nasm ccache
           # Install Node.js
@@ -54,7 +54,7 @@ jobs:
 
       - name: Run the script (EL8)
         # Use scl enable with the correct toolset name for EL8
-        shell: scl enable gcc-toolset-11 -- bash {0}
+        shell: scl enable gcc-toolset-12 -- bash {0}
         env:
           ARCH: ${{ matrix.arch }}
           # Inside 'scl enable gcc-toolset-11', gcc/g++ point to the toolset versions
