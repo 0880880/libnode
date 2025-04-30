@@ -30,7 +30,7 @@ jobs:
             ${{ github.workflow }}-${{ matrix.arch }}-${{ hashFiles('**/version.txt') }}
             ${{ github.workflow }}-${{ matrix.arch }}-
 
-- name: Install building tools
+      - name: Install building tools
         # manylinux2_28 is CentOS 7 based, use yum
         run: |
           yum update -y
