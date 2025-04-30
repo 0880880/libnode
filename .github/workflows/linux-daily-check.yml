@@ -12,9 +12,9 @@ jobs:
     strategy:
       matrix:
         arch: [amd64]
-        include:
-          - arch: arm64
-            is_arm: true
+        #include:
+        #  - arch: arm64
+        #    is_arm: true
     container:
       image: quay.io/pypa/manylinux_2_28_${{ matrix.arch == 'amd64' && 'x86_64' || 'aarch64' }}
     steps:
