@@ -30,31 +30,64 @@ jobs:
             ${{ github.workflow }}-${{ matrix.arch }}-${{ hashFiles('**/version.txt') }}
             ${{ github.workflow }}-${{ matrix.arch }}-
 
-      - name: Install building tools
+- name: Install building tools
+        # manylinux2_28 is CentOS 7 based, use yum
         run: |
-          # Install Node.js
+          yum update -y
+          # Install SCL and EPEL repos to get devtoolset
+          yum install -y centos-release-scl epel-release
+          # Install a recent devtoolset (e.g., 11 for GCC 11) and other tools
+          # Devtoolset provides modern gcc, g++, binutils etc.
+          yum install -y devtoolset-11-gcc devtoolset-11-gcc-c++ devtoolset-11-binutils make git python3 python3-pip nasm ccache
+          # Keep Node.js installation (though you might not need it just for building C++)
           curl -sL https://rpm.nodesource.com/setup_21.x | bash -
-          dnf install -y nodejs git python3 python3-pip gcc gcc-c++ make nasm ccache
+          yum install -y nodejs # Use yum since we used it above
 
           # For cross-compiling to ARM64 if we're on x86_64
+          # WARNING: The cross-compiler installed here might ALSO be too old if it comes
+          # from the base CentOS 7 repos. This might require a separate solution
+          # like finding a modern cross-compiler package or using a different build image/runner for ARM.
+          # Let's focus on fixing the native build first.
           if [ "${{ matrix.arch }}" = "arm64" ] && [ "$(uname -m)" = "x86_64" ]; then
-            dnf install -y gcc-aarch64-linux-gnu gcc-c++-aarch64-linux-gnu binutils-aarch64-linux-gnu
+            echo "Warning: Installing default aarch64 cross-compiler, which might be too old."
+            yum install -y gcc-aarch64-linux-gnu gcc-c++-aarch64-linux-gnu binutils-aarch64-linux-gnu
           fi
 
       - name: Run the script
+        # Use the SCL 'enable' feature to activate the newer toolchain for this step
+        # This modifies PATH, LD_LIBRARY_PATH etc. within the context of this command.
+        shell: scl enable devtoolset-11 -- bash {0}
         env:
           ARCH: ${{ matrix.arch }}
+          # Inside the 'scl enable' environment, 'gcc'/'g++' will resolve to the devtoolset ones for native builds.
+          # The cross-compiler path still points to the potentially old system one.
           CC: "${{ matrix.is_arm && 'aarch64-linux-gnu-gcc' || 'gcc' }}"
           CXX: "${{ matrix.is_arm && 'aarch64-linux-gnu-g++' || 'g++' }}"
           CFLAGS: "-O2 -fPIC"
+          # GCC 11 fully supports C++20
           CXXFLAGS: "-O2 -fPIC -std=c++20"
           LDFLAGS: "-Wl,--as-needed"
+          # CCACHE setup
+          CCACHE_COMPRESS: "true"
+          CCACHE_BASEDIR: "$GITHUB_WORKSPACE"
+          CCACHE_DIR: "$GITHUB_WORKSPACE/.ccache"
         run: |
-          export CCACHE_COMPRESS="true"
-          export CCACHE_BASEDIR="$GITHUB_WORKSPACE"
-          export CCACHE_DIR="$CCACHE_BASEDIR/.ccache"
-          export PATH="/usr/lib64/ccache:/usr/lib/ccache:$PATH"
+          # Verify the compiler version being used (should be GCC 11.x now for native)
+          echo "--- Verifying Compiler Versions ---"
+          which gcc
+          ${CC} --version
+          which g++
+          ${CXX} --version
+          echo "--- End Verification ---"
+
+          # Ensure ccache directory exists
           mkdir -p "$CCACHE_DIR"
+          # Prepend ccache to the PATH *within* the SCL environment
+          export PATH="/usr/lib64/ccache:$PATH" # Adjust path if needed for your ccache install location
+
+          echo "PATH is: $PATH"
+          echo "Using CC: $CC"
+          echo "Using CXX: $CXX"
 
           node index.js
 
