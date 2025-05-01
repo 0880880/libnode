@@ -8,15 +8,21 @@ on:
 
 jobs:
   update:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest # Still use ubuntu-latest runner, but the container below will be specific
     strategy:
+      fail-fast: false # Optional: Prevent cancelling other jobs if one fails
       matrix:
         arch: [amd64, arm64]
         include:
+          # Map matrix arch names to manylinux arch names
+          - arch: amd64
+            manylinux_arch: x86_64
           - arch: arm64
-            is_arm: true
+            manylinux_arch: aarch64
+            # is_arm flag is no longer strictly needed as we'll be native
     container:
-      image: quay.io/pypa/manylinux_2_28_x86_64
+      # Dynamically select the container image based on the matrix architecture
+      image: quay.io/pypa/manylinux_2_28_${{ matrix.manylinux_arch }}
     steps:
       - uses: actions/checkout@v4
 
@@ -25,47 +31,39 @@ jobs:
         with:
           path: .ccache
           save-always: true
-          key: ${{ github.workflow }}-${{ matrix.arch }}-${{ hashFiles('**/version.txt') }}
+          key: ccache-${{ github.workflow }}-${{ matrix.arch }}-${{ hashFiles('**/version.txt') }} # Added prefix for clarity
           restore-keys: |
-            ${{ github.workflow }}-${{ matrix.arch }}-${{ hashFiles('**/version.txt') }}
-            ${{ github.workflow }}-${{ matrix.arch }}-
+            ccache-${{ github.workflow }}-${{ matrix.arch }}-
 
-      - name: Install building tools (EL8)
-        # Running on AlmaLinux 8 or similar (RHEL 8 based)
+      - name: Install building tools (Native Arch)
         run: |
+          # Running natively on x86_64 or aarch64 depending on the container
+          echo "--- System Architecture ---"
+          uname -m
+          echo "--- Installing tools ---"
           dnf update -y
-          # Install EPEL (already installed according to logs, but good practice)
-          dnf install -y epel-release
-          # Install GCC Toolset 11 for a modern compiler
+          # Install EPEL (should be present in manylinux, but good practice)
+          dnf install -y epel-release || echo "EPEL already installed or failed, continuing..."
+          # Install GCC Toolset 12 for a modern compiler (works on both x86_64 and aarch64)
           dnf install -y gcc-toolset-12-gcc gcc-toolset-12-gcc-c++ gcc-toolset-12-binutils
           # Install other required tools
           dnf install -y make git python3 python3-pip nasm ccache
           # Install Node.js
           curl -sL https://rpm.nodesource.com/setup_21.x | bash -
           dnf install -y nodejs
+          echo "--- Tool installation complete ---"
+          # No need for cross-compiler installation anymore
 
-          # For cross-compiling to ARM64 if we're on x86_64
-          # Note: The default cross-compiler on EL8 might still be too old for C++20.
-          # Check its version after installation if the ARM build fails.
-          if [ "${{ matrix.arch }}" = "arm64" ] && [ "$(uname -m)" = "x86_64" ]; then
-            echo "Warning: Installing default aarch64 cross-compiler. Verify its version if ARM build fails."
-            dnf install -y \
-              binutils-aarch64-linux-gnu \
-              gcc-aarch64-linux-gnu \
-              gcc-c++-aarch64-linux-gnu
-
-          fi
-
-      - name: Run the script (EL8)
-        # Use scl enable with the correct toolset name for EL8
+      - name: Run the script (Native Arch)
+        # Use scl enable with the correct toolset name
         shell: scl enable gcc-toolset-12 -- bash {0}
         env:
           ARCH: ${{ matrix.arch }}
-          CC: "${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-gcc' || 'gcc' }}"
-          CXX: "${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-g++' || 'g++' }}"
+          # Use the native compilers provided by the SCL toolset
+          CC: "gcc"
+          CXX: "g++"
           CFLAGS: "-O2 -fPIC"
-          # ---> CRITICAL: Ensure -std=c++20 is NOT here <---
-          # ---> Include the fix for OpenSSL deprecation warnings <---
+          # Allow Node.js build system to set C++ standard, keep OpenSSL fix
           CXXFLAGS: "-O2 -fPIC -Wno-error=deprecated-declarations"
           LDFLAGS: "-Wl,--as-needed"
           # CCACHE setup
@@ -73,8 +71,9 @@ jobs:
           CCACHE_BASEDIR: "$GITHUB_WORKSPACE"
           CCACHE_DIR: "$GITHUB_WORKSPACE/.ccache"
         run: |
-          # Verify the compiler version being used (should be GCC 11.x now for native)
-          echo "--- Verifying Compiler Versions ---"
+          echo "--- System Architecture ---"
+          uname -m
+          echo "--- Verifying Compiler Versions (within SCL) ---"
           which gcc
           ${CC} --version
           which g++
@@ -83,21 +82,39 @@ jobs:
 
           # Ensure ccache directory exists
           mkdir -p "$CCACHE_DIR"
+
           # Prepend ccache to the PATH *within* the SCL environment
-          # Use the standard ccache path for EL8
+          # Use the standard ccache path (adjust if needed based on `rpm -ql ccache`)
           export PATH="/usr/lib64/ccache:$PATH"
 
           echo "PATH is: $PATH"
-          echo "Using CC: $CC"
-          echo "Using CXX: $CXX"
+          echo "Building for ARCH: $ARCH"
+          echo "Using CC: $(which ${CC})"
+          echo "Using CXX: $(which ${CXX})"
 
+          # Set cache size (optional, but good practice)
+          ccache -M 5G
+          ccache -s # Print stats before build
+
+          # Run the build
           node index.js
+
+          ccache -s # Print stats after build
 
       - name: Create archive
         run: |
+          # Assuming the output path is consistent
           cd node/out/Release
-          ln -sf libnode.so.* libnode.so
-          tar -cJf "libnode-${{ matrix.arch }}-linux.tar.xz" libnode.* node
+          # Handle potential variations in .so naming if needed, but this should often work
+          SO_FILE=$(ls libnode.so.* | head -n 1)
+          if [ -z "$SO_FILE" ]; then
+            echo "Error: Could not find libnode.so.* file!"
+            exit 1
+          fi
+          ln -sf "$SO_FILE" libnode.so
+          ls -l libnode.* node # Debugging output
+          tar -cvJf "libnode-${{ matrix.arch }}-linux.tar.xz" libnode.so* node
+          echo "Created archive libnode-${{ matrix.arch }}-linux.tar.xz"
 
       - name: Upload binaries to release
         uses: svenstaro/upload-release-action@v2
@@ -105,4 +122,6 @@ jobs:
           overwrite: true
           tag: ${{ github.ref }}
           repo_token: ${{ secrets.GITHUB_TOKEN }}
+          # Use a wildcard to be safer if the exact archive name changes slightly
           file: node/out/Release/libnode-${{ matrix.arch }}-linux.tar.xz
+          file_glob: true # Recommended if using wildcards, but specific name should be fine too
