@@ -28,70 +28,44 @@ jobs:
           key: ${{ github.workflow }}-${{ matrix.arch }}-${{ hashFiles('**/version.txt') }}
           restore-keys: |
             ${{ github.workflow }}-${{ matrix.arch }}-${{ hashFiles('**/version.txt') }}
-            ${{ github.workflow }}-${{ matrix.arch }}- # Fallback key
+            ${{ github.workflow }}-${{ matrix.arch }}-
 
-      # --- Install building tools using default container repos ---
-      # This step relies on the packages available in the standard
-      # repos configured within the manylinux_2_28_x86_64 image.
-      - name: Install building tools (using default repos)
+      - name: Install building tools (EL8)
+        # Running on AlmaLinux 8 or similar (RHEL 8 based)
         run: |
-          # Update package list (optional, but good practice)
           dnf update -y
-
-          # Install core building tools
-          # These should be available in the default AppStream/BaseOS repos
-          dnf install -y \
-            make git python3 python3-pip nasm ccache \
-            gcc gcc-c++ # Install default system compiler
-
-          # Attempt to install Node.js from default repos (likely AppStream)
-          # Note: The version might be older than NodeSource
+          # Install EPEL (already installed according to logs, but good practice)
+          dnf install -y epel-release
+          # Install GCC Toolset 11 for a modern compiler
+          dnf install -y gcc-toolset-12-gcc gcc-toolset-12-gcc-c++ gcc-toolset-12-binutils
+          # Install other required tools
+          dnf install -y make git python3 python3-pip nasm ccache
+          # Install Node.js
+          curl -sL https://rpm.nodesource.com/setup_21.x | bash -
           dnf install -y nodejs
 
-          # For cross-compiling to ARM64
-          # These cross-development packages should also be in default/CRB repos
+          # For cross-compiling to ARM64 if we're on x86_64
+          # Note: The default cross-compiler on EL8 might still be too old for C++20.
+          # Check its version after installation if the ARM build fails.
           if [ "${{ matrix.arch }}" = "arm64" ] && [ "$(uname -m)" = "x86_64" ]; then
-            echo "Installing aarch64 cross-compiler and development libraries..."
+            echo "Warning: Installing default aarch64 cross-compiler. Verify its version if ARM build fails."
             dnf install -y \
               binutils-aarch64-linux-gnu \
               gcc-aarch64-linux-gnu \
-              gcc-c++-aarch64-linux-gnu \
-              glibc-devel.aarch64 \
-              libstdc++-devel.aarch64
+              gcc-c++-aarch64-linux-gnu
 
-            # Error handling: Check if install succeeded
-            if [ $? -ne 0 ]; then
-              echo "Error: Failed to install aarch64 cross-dev packages."
-              echo "Searching for glibc-devel aarch64..."
-              dnf search glibc-devel | grep aarch64 || echo "glibc-devel.aarch64 not found via search."
-              echo "Searching for libstdc++-devel aarch64..."
-              dnf search libstdc++-devel | grep aarch64 || echo "libstdc++-devel.aarch64 not found via search."
-              echo "Ensure these packages are available in the default repositories of the chosen manylinux image."
-              exit 1 # Fail the step if packages are not found/installed
-            fi
           fi
 
-          # Verify installed tools (optional)
-          echo "Verifying tool versions:"
-          gcc --version || echo "Default gcc not found"
-          g++ --version || echo "Default g++ not found"
-          which aarch64-linux-gnu-gcc || echo "aarch64-linux-gnu-gcc not found"
-          node --version || echo "Node.js not found"
-          python3 --version || echo "Python3 not found"
-          make --version || echo "Make not found"
-          ccache --version || echo "ccache not found"
-
-
-      # --- Run the build script ---
-      - name: Run the script
-        # Removed 'shell: scl enable...' - now using default environment
+      - name: Run the script (EL8)
+        # Use scl enable with the correct toolset name for EL8
+        shell: scl enable gcc-toolset-12 -- bash {0}
         env:
           ARCH: ${{ matrix.arch }}
-          # Set CC/CXX based on target architecture
           CC: "${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-gcc' || 'gcc' }}"
           CXX: "${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-g++' || 'g++' }}"
           CFLAGS: "-O2 -fPIC"
-          # Added -Wno-error=deprecated-declarations workaround, ensure -std=c++20 is NOT used
+          # ---> CRITICAL: Ensure -std=c++20 is NOT here <---
+          # ---> Include the fix for OpenSSL deprecation warnings <---
           CXXFLAGS: "-O2 -fPIC -Wno-error=deprecated-declarations"
           LDFLAGS: "-Wl,--as-needed"
           # CCACHE setup
@@ -99,40 +73,30 @@ jobs:
           CCACHE_BASEDIR: "$GITHUB_WORKSPACE"
           CCACHE_DIR: "$GITHUB_WORKSPACE/.ccache"
         run: |
-          echo "--- Verifying Compiler Versions being used by build system ---"
-          echo "Using CC: ${CC}"
-          echo "Using CXX: ${CXX}"
+          # Verify the compiler version being used (should be GCC 11.x now for native)
+          echo "--- Verifying Compiler Versions ---"
+          which gcc
           ${CC} --version
+          which g++
           ${CXX} --version
           echo "--- End Verification ---"
 
-          # Ensure ccache directory exists (redundant with actions/cache restore, but harmless)
+          # Ensure ccache directory exists
           mkdir -p "$CCACHE_DIR"
+          # Prepend ccache to the PATH *within* the SCL environment
+          # Use the standard ccache path for EL8
+          export PATH="/usr/lib64/ccache:$PATH"
 
-          # Prepend ccache to the PATH *within* the current shell session.
-          # Ccache should be in a standard bin directory like /usr/bin.
-          export PATH="/usr/bin/ccache:$PATH" # Use standard /usr/bin path
+          echo "PATH is: $PATH"
+          echo "Using CC: $CC"
+          echo "Using CXX: $CXX"
 
-          echo "Final PATH is: $PATH"
-
-          # Execute the build script using Node.js
           node index.js
 
       - name: Create archive
         run: |
           cd node/out/Release
-          # Symlink might link to a versioned file like libnode.so.XX
-          # Ensure the symlink points to the *actual* built library file
-          # Find the actual shared library name first
-          LIBNODE_SO=$(find . -maxdepth 1 -name 'libnode.so.*' -type f | head -n 1)
-          if [ -z "$LIBNODE_SO" ]; then
-              echo "Error: libnode.so.* not found in node/out/Release"
-              exit 1
-          fi
-          echo "Creating symlink libnode.so -> ${LIBNODE_SO}"
-          ln -sf $(basename "$LIBNODE_SO") libnode.so # Symlink target should be just the filename
-
-          # Create the tar archive
+          ln -sf libnode.so.* libnode.so
           tar -cJf "libnode-${{ matrix.arch }}-linux.tar.xz" libnode.* node
 
       - name: Upload binaries to release
@@ -142,4 +106,3 @@ jobs:
           tag: ${{ github.ref }}
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: node/out/Release/libnode-${{ matrix.arch }}-linux.tar.xz
-
