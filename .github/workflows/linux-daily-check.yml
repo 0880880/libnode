@@ -101,7 +101,7 @@ jobs:
             echo "--- Creating archive ---"
             cd /github/workspace/node/out/Release || exit 1
             SO_FILE=$(ls libnode.so.* | head -n 1) || exit 1
-            echo "Found SO file: $SO_FILE"
+            echo "Found SO file:$SO_FILE"
             ln -sf "$SO_FILE" libnode.so
             tar -cvJf "/github/workspace/libnode-${ARCH}-linux.tar.xz" libnode.so "$SO_FILE" node
             echo "Archive created at /github/workspace/libnode-${ARCH}-linux.tar.xz"
