@@ -88,7 +88,7 @@ jobs:
             ccache -s
             echo "Compiler versions:"
             scl enable gcc-toolset-12 -- bash -ec 'gcc --version; g++ --version; which gcc; which g++'
-            echo "PATH: $PATH"
+            echo "PATH:$PATH"
             echo "Starting build..."
             scl enable gcc-toolset-12 -- bash -ec 'node index.js'
             echo "Build finished."
