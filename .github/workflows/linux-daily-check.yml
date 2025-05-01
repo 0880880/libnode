@@ -109,18 +109,30 @@ jobs:
 
       - name: Build (arm64 Emulated via Docker)
         if: matrix.use_docker == true
-        # env block remains the same
         env:
+          # Build variables passed into the container
           ARCH: ${{ matrix.arch }}
-          # ... other env vars ...
+          CC: "gcc"
+          CXX: "g++"
+          CFLAGS: "-O2 -fPIC"
+          CXXFLAGS: "-O2 -fPIC -Wno-error=deprecated-declarations"
+          LDFLAGS: "-Wl,--as-needed"
+          CCACHE_COMPRESS: "true"
+          CCACHE_BASEDIR: "/workspace"
+          CCACHE_DIR: "/workspace/.ccache"
+          CCACHE_MAXSIZE: "5G"
           DEBIAN_FRONTEND: noninteractive
+          # Explicitly define the Docker image name in the environment
+          DOCKER_IMAGE: quay.io/pypa/manylinux_2_28_${{ matrix.manylinux_arch }}
         run: |
           echo "--- Starting Docker container for ARM64 build ---"
-          # The image name here CAN use matrix context because it's inside a 'run' script
+          echo "Using image: $DOCKER_IMAGE" # Debugging line
+
+          # Use the $DOCKER_IMAGE env var
+          # Ensure the image name is clearly separated before the command
           docker run --rm \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
-            # Pass env vars explicitly
             -e ARCH \
             -e CC \
             -e CXX \
@@ -132,7 +144,7 @@ jobs:
             -e CCACHE_DIR \
             -e CCACHE_MAXSIZE \
             -e DEBIAN_FRONTEND \
-            quay.io/pypa/manylinux_2_28_${{ matrix.manylinux_arch }} \
+            "$DOCKER_IMAGE" \
             bash -ec '
               echo "--- Running inside arm64 container ---"
               uname -m
@@ -152,7 +164,7 @@ jobs:
               ccache -s
               echo "Compiler versions:"
               scl enable gcc-toolset-12 -- bash -ec "gcc --version; g++ --version; which gcc; which g++"
-              echo "PATH: $PATH"
+              echo "PATH:$PATH"
               echo "Starting build..."
               scl enable gcc-toolset-12 -- bash -ec "node index.js"
               echo "Build finished."
@@ -162,6 +174,7 @@ jobs:
               # Workspace is mounted at /workspace
               cd /workspace/node/out/Release || exit 1
               SO_FILE=$(ls libnode.so.* | head -n 1) || exit 1
+              echo "Found SO file: $SO_FILE"
               ln -sf "$SO_FILE" libnode.so
               # Create archive directly in the mounted workspace directory
               tar -cvJf "/workspace/libnode-${ARCH}-linux.tar.xz" libnode.so "$SO_FILE" node
