@@ -11,12 +11,12 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        arch: [amd64]
-        #include:
-        #  - arch: arm64
-        #    is_arm: true
+        arch: [amd64, arm64]
+        include:
+          - arch: arm64
+            is_arm: true
     container:
-      image: quay.io/pypa/manylinux_2_28_${{ matrix.arch == 'amd64' && 'x86_64' || 'aarch64' }}
+      image: quay.io/pypa/manylinux_2_28_x86_64
     steps:
       - uses: actions/checkout@v4
 
