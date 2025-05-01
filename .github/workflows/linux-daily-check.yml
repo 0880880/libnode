@@ -34,26 +34,40 @@ jobs:
         # Running on AlmaLinux 8 or similar (RHEL 8 based)
         run: |
           dnf update -y
-          # Install EPEL (already installed according to logs, but good practice)
-          dnf install -y epel-release
-          # Install GCC Toolset 11 for a modern compiler
+          # Install EPEL
+          dnf install -y epel-release || true
+          # Install core dnf plugins to get config-manager
+          dnf install -y dnf-plugins-core
+          # Enable the CodeReady Builder (CRB) repository - often needed for -devel packages
+          dnf config-manager --set-enabled crb
+          echo "Enabled repositories:"
+          dnf repolist enabled # Optional: Check which repos are now enabled
+
+          # Install GCC Toolset 12 for a modern compiler (for host)
           dnf install -y gcc-toolset-12-gcc gcc-toolset-12-gcc-c++ gcc-toolset-12-binutils
           # Install other required tools
           dnf install -y make git python3 python3-pip nasm ccache
-          # Install Node.js
+          # Install Node.js (for host build process)
           curl -sL https://rpm.nodesource.com/setup_21.x | bash -
           dnf install -y nodejs
 
           # For cross-compiling to ARM64 if we're on x86_64
-          # Note: The default cross-compiler on EL8 might still be too old for C++20.
-          # Check its version after installation if the ARM build fails.
           if [ "${{ matrix.arch }}" = "arm64" ] && [ "$(uname -m)" = "x86_64" ]; then
-            echo "Warning: Installing default aarch64 cross-compiler. Verify its version if ARM build fails."
+            echo "Installing aarch64 cross-compiler and development libraries..."
+            # Retry installing cross-compiler tools AND the target's standard library development files
+            # Now that 'crb' repo is enabled, these might be found
             dnf install -y \
               binutils-aarch64-linux-gnu \
               gcc-aarch64-linux-gnu \
-              gcc-c++-aarch64-linux-gnu
+              gcc-c++-aarch64-linux-gnu \
+              glibc-devel.aarch64 \
+              libstdc++-devel.aarch64
 
+            # Optional: Check cross-compiler version if needed
+            echo "--- Verifying Cross-Compiler Version ---"
+            aarch64-linux-gnu-gcc --version
+            aarch64-linux-gnu-g++ --version
+            echo "--- End Verification ---"
           fi
 
       - name: Run the script (EL8)
