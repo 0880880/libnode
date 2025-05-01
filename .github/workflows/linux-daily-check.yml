@@ -8,120 +8,155 @@ on:
 
 jobs:
   update:
-    runs-on: ubuntu-latest # Still use ubuntu-latest runner, but the container below will be specific
+    # Keep the standard runner, QEMU will handle emulation for ARM
+    runs-on: ubuntu-latest
     strategy:
-      fail-fast: false # Optional: Prevent cancelling other jobs if one fails
+      fail-fast: false
       matrix:
         arch: [amd64, arm64]
         include:
-          # Map matrix arch names to manylinux arch names
           - arch: amd64
             manylinux_arch: x86_64
           - arch: arm64
             manylinux_arch: aarch64
-            # is_arm flag is no longer strictly needed as we'll be native
+
+    # Define the container for the job steps
     container:
-      # Dynamically select the container image based on the matrix architecture
       image: quay.io/pypa/manylinux_2_28_${{ matrix.manylinux_arch }}
+
     steps:
+      # STEP 1: Set up QEMU - Run this *before* checkout
+      # This is necessary for the x86_64 runner to execute arm64 container code
+      - name: Set up QEMU
+        # Only run this step when the matrix arch requires emulation
+        if: matrix.arch == 'arm64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64 # Specify the target platform(s)
+
+      # STEP 2: Checkout code - This now happens within the correctly started container context
       - uses: actions/checkout@v4
 
+      # STEP 3: Setup ccache
       - name: Setup ccache
         uses: actions/cache@v4
         with:
-          path: .ccache
+          path: .ccache # Cache path is relative to GITHUB_WORKSPACE inside the container
           save-always: true
-          key: ccache-${{ github.workflow }}-${{ matrix.arch }}-${{ hashFiles('**/version.txt') }} # Added prefix for clarity
+          key: ccache-${{ github.workflow }}-${{ matrix.arch }}-${{ hashFiles('**/version.txt') }}
           restore-keys: |
             ccache-${{ github.workflow }}-${{ matrix.arch }}-
 
+      # STEP 4: Install tools inside the container
       - name: Install building tools (Native Arch)
         run: |
-          # Running natively on x86_64 or aarch64 depending on the container
-          echo "--- System Architecture ---"
+          echo "--- System Architecture (inside container) ---"
           uname -m
           echo "--- Installing tools ---"
-          dnf update -y
-          # Install EPEL (should be present in manylinux, but good practice)
-          dnf install -y epel-release || echo "EPEL already installed or failed, continuing..."
-          # Install GCC Toolset 12 for a modern compiler (works on both x86_64 and aarch64)
+          # Set DEBIAN_FRONTEND to noninteractive if using Debian/Ubuntu based images
+          # export DEBIAN_FRONTEND=noninteractive
+          # For RHEL/AlmaLinux/CentOS based (like manylinux):
+          dnf update -y --setopt=tsflags=nodocs
+          dnf install -y epel-release || echo "EPEL already installed or enable failed, continuing..."
+          # Install GCC Toolset 12
           dnf install -y gcc-toolset-12-gcc gcc-toolset-12-gcc-c++ gcc-toolset-12-binutils
           # Install other required tools
           dnf install -y make git python3 python3-pip nasm ccache
           # Install Node.js
-          curl -sL https://rpm.nodesource.com/setup_21.x | bash -
+          curl -fsSL https://rpm.nodesource.com/setup_21.x | bash -
           dnf install -y nodejs
+          # Clean up dnf cache
+          dnf clean all
+          rm -rf /var/cache/dnf
           echo "--- Tool installation complete ---"
-          # No need for cross-compiler installation anymore
 
+      # STEP 5: Run the build script
       - name: Run the script (Native Arch)
-        # Use scl enable with the correct toolset name
         shell: scl enable gcc-toolset-12 -- bash {0}
         env:
           ARCH: ${{ matrix.arch }}
-          # Use the native compilers provided by the SCL toolset
           CC: "gcc"
           CXX: "g++"
           CFLAGS: "-O2 -fPIC"
-          # Allow Node.js build system to set C++ standard, keep OpenSSL fix
           CXXFLAGS: "-O2 -fPIC -Wno-error=deprecated-declarations"
           LDFLAGS: "-Wl,--as-needed"
           # CCACHE setup
           CCACHE_COMPRESS: "true"
-          CCACHE_BASEDIR: "$GITHUB_WORKSPACE"
-          CCACHE_DIR: "$GITHUB_WORKSPACE/.ccache"
+          CCACHE_BASEDIR: "${GITHUB_WORKSPACE}" # Use Actions variable
+          CCACHE_DIR: "${GITHUB_WORKSPACE}/.ccache" # Use Actions variable
+          # Increase verbosity for ccache
+          CCACHE_DEBUG: "1"
+          # Set cache size
+          CCACHE_MAXSIZE: "5G"
         run: |
-          echo "--- System Architecture ---"
+          echo "--- Environment ---"
+          printenv
+          echo "--- System Architecture (inside container) ---"
           uname -m
           echo "--- Verifying Compiler Versions (within SCL) ---"
           which gcc
           ${CC} --version
           which g++
           ${CXX} --version
-          echo "--- End Verification ---"
-
-          # Ensure ccache directory exists
+          echo "--- CCACHE Setup ---"
+          # Ensure ccache directory exists (should be created by cache action)
           mkdir -p "$CCACHE_DIR"
-
-          # Prepend ccache to the PATH *within* the SCL environment
-          # Use the standard ccache path (adjust if needed based on `rpm -ql ccache`)
+          # Prepend ccache wrapper directory to the PATH
           export PATH="/usr/lib64/ccache:$PATH"
+          # Verify ccache is found
+          which ccache
+          ccache --version
+          # Link compilers for ccache (optional but good practice if CC/CXX are not just 'gcc'/'g++')
+          # ln -s /usr/bin/ccache /usr/local/bin/gcc
+          # ln -s /usr/bin/ccache /usr/local/bin/g++
+          # export PATH="/usr/local/bin:$PATH"
 
           echo "PATH is: $PATH"
           echo "Building for ARCH: $ARCH"
           echo "Using CC: $(which ${CC})"
           echo "Using CXX: $(which ${CXX})"
 
-          # Set cache size (optional, but good practice)
-          ccache -M 5G
+          ccache -z # Zero stats before build
           ccache -s # Print stats before build
 
           # Run the build
+          echo "--- Starting Node.js build script ---"
           node index.js
+          echo "--- Node.js build script finished ---"
 
           ccache -s # Print stats after build
 
+      # STEP 6: Create archive
       - name: Create archive
         run: |
-          # Assuming the output path is consistent
+          echo "--- Creating archive ---"
           cd node/out/Release
-          # Handle potential variations in .so naming if needed, but this should often work
+          ls -l # List files for debugging
           SO_FILE=$(ls libnode.so.* | head -n 1)
           if [ -z "$SO_FILE" ]; then
             echo "Error: Could not find libnode.so.* file!"
-            exit 1
+            # Try listing again in case of timing issue
+            sleep 2
+            ls -l
+            SO_FILE=$(ls libnode.so.* | head -n 1)
+            if [ -z "$SO_FILE" ]; then
+               exit 1
+            fi
           fi
+          echo "Found SO file: $SO_FILE"
+          # Create symlink libnode.so -> libnode.so.XXX
           ln -sf "$SO_FILE" libnode.so
-          ls -l libnode.* node # Debugging output
-          tar -cvJf "libnode-${{ matrix.arch }}-linux.tar.xz" libnode.so* node
+          # Create archive containing the symlink, the actual .so file, and the node executable
+          tar -cvJf "libnode-${{ matrix.arch }}-linux.tar.xz" libnode.so "$SO_FILE" node
           echo "Created archive libnode-${{ matrix.arch }}-linux.tar.xz"
+          ls -l libnode-${{ matrix.arch }}-linux.tar.xz # Verify archive exists
 
+      # STEP 7: Upload binaries
       - name: Upload binaries to release
         uses: svenstaro/upload-release-action@v2
         with:
           overwrite: true
           tag: ${{ github.ref }}
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          # Use a wildcard to be safer if the exact archive name changes slightly
           file: node/out/Release/libnode-${{ matrix.arch }}-linux.tar.xz
-          file_glob: true # Recommended if using wildcards, but specific name should be fine too
+          file_glob: false # Use specific file name
