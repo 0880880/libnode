@@ -55,12 +55,14 @@ jobs:
 
       - name: Build (amd64 Native Container)
         if: matrix.use_docker == false
-        uses: docker://quay.io/pypa/manylinux_2_28_${{ matrix.manylinux_arch }}
+        # Use the specific x86_64 image because the 'if' condition guarantees this matrix combo
+        uses: docker://quay.io/pypa/manylinux_2_28_x86_64
         with:
           entrypoint: /bin/bash
           args: -ec |
             echo "--- Running inside amd64 container ---"
             uname -m
+            export DEBIAN_FRONTEND=noninteractive
             dnf update -y --setopt=tsflags=nodocs
             dnf install -y epel-release || echo "EPEL failed, continuing..."
             dnf install -y gcc-toolset-12-gcc gcc-toolset-12-gcc-c++ gcc-toolset-12-binutils make git python3 python3-pip nasm ccache curl
@@ -70,6 +72,7 @@ jobs:
             rm -rf /var/cache/dnf
 
             echo "--- Enabling SCL and running build ---"
+            
             export ARCH=${{ matrix.arch }}
             export CC="gcc"
             export CXX="g++"
@@ -77,6 +80,7 @@ jobs:
             export CXXFLAGS="-O2 -fPIC -Wno-error=deprecated-declarations"
             export LDFLAGS="-Wl,--as-needed"
             export CCACHE_COMPRESS="true"
+            
             export CCACHE_BASEDIR="/github/workspace"
             export CCACHE_DIR="/github/workspace/.ccache"
             export CCACHE_MAXSIZE="5G"
@@ -88,7 +92,7 @@ jobs:
             ccache -s
             echo "Compiler versions:"
             scl enable gcc-toolset-12 -- bash -ec 'gcc --version; g++ --version; which gcc; which g++'
-            echo "PATH:$PATH"
+            echo "PATH: $PATH"
             echo "Starting build..."
             scl enable gcc-toolset-12 -- bash -ec 'node index.js'
             echo "Build finished."
@@ -97,32 +101,26 @@ jobs:
             echo "--- Creating archive ---"
             cd /github/workspace/node/out/Release || exit 1
             SO_FILE=$(ls libnode.so.* | head -n 1) || exit 1
+            echo "Found SO file: $SO_FILE"
             ln -sf "$SO_FILE" libnode.so
-            tar -cvJf "/github/workspace/libnode-${{ matrix.arch }}-linux.tar.xz" libnode.so "$SO_FILE" node
-            echo "Archive created at /github/workspace/libnode-${{ matrix.arch }}-linux.tar.xz"
-            ls -l "/github/workspace/libnode-${{ matrix.arch }}-linux.tar.xz"
+            tar -cvJf "/github/workspace/libnode-${ARCH}-linux.tar.xz" libnode.so "$SO_FILE" node
+            echo "Archive created at /github/workspace/libnode-${ARCH}-linux.tar.xz"
+            ls -l "/github/workspace/libnode-${ARCH}-linux.tar.xz"
 
       - name: Build (arm64 Emulated via Docker)
         if: matrix.use_docker == true
+        # env block remains the same
         env:
-          # Pass necessary variables to the docker run command environment
           ARCH: ${{ matrix.arch }}
-          CC: "gcc"
-          CXX: "g++"
-          CFLAGS: "-O2 -fPIC"
-          CXXFLAGS: "-O2 -fPIC -Wno-error=deprecated-declarations"
-          LDFLAGS: "-Wl,--as-needed"
-          CCACHE_COMPRESS: "true"
-          # These need to point to paths INSIDE the container
-          CCACHE_BASEDIR: "/workspace"
-          CCACHE_DIR: "/workspace/.ccache"
-          CCACHE_MAXSIZE: "5G"
-          DEBIAN_FRONTEND: noninteractive # Good practice even if not Debian
+          # ... other env vars ...
+          DEBIAN_FRONTEND: noninteractive
         run: |
           echo "--- Starting Docker container for ARM64 build ---"
+          # The image name here CAN use matrix context because it's inside a 'run' script
           docker run --rm \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
+            # Pass env vars explicitly
             -e ARCH \
             -e CC \
             -e CXX \
