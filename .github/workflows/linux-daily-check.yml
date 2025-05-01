@@ -8,7 +8,7 @@ on:
 
 jobs:
   update:
-    # Keep the standard runner, QEMU will handle emulation for ARM
+    # Always run the job orchestration on ubuntu-latest
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -17,146 +17,168 @@ jobs:
         include:
           - arch: amd64
             manylinux_arch: x86_64
+            use_docker: false # Flag to indicate if explicit docker is needed
           - arch: arm64
             manylinux_arch: aarch64
+            use_docker: true # Flag to indicate if explicit docker is needed
 
-    # Define the container for the job steps
-    container:
-      image: quay.io/pypa/manylinux_2_28_${{ matrix.manylinux_arch }}
+    # NO top-level container definition here
 
     steps:
-      # STEP 1: Set up QEMU - Run this *before* checkout
-      # This is necessary for the x86_64 runner to execute arm64 container code
+      # STEP 1: Set up QEMU (only needed for the ARM build running on x86_64 host)
       - name: Set up QEMU
-        # Only run this step when the matrix arch requires emulation
-        if: matrix.arch == 'arm64'
+        if: matrix.use_docker == true # Only if we need emulation
         uses: docker/setup-qemu-action@v3
         with:
-          platforms: arm64 # Specify the target platform(s)
+          platforms: arm64
 
-      # STEP 2: Checkout code - This now happens within the correctly started container context
+      # STEP 2: Checkout code (runs on the host runner)
       - uses: actions/checkout@v4
 
-      # STEP 3: Setup ccache
+      # STEP 3: Setup ccache (caches on the host runner filesystem)
       - name: Setup ccache
         uses: actions/cache@v4
         with:
-          path: .ccache # Cache path is relative to GITHUB_WORKSPACE inside the container
+          # Path is relative to GITHUB_WORKSPACE on the HOST
+          path: ${{ github.workspace }}/.ccache
           save-always: true
           key: ccache-${{ github.workflow }}-${{ matrix.arch }}-${{ hashFiles('**/version.txt') }}
           restore-keys: |
             ccache-${{ github.workflow }}-${{ matrix.arch }}-
 
-      # STEP 4: Install tools inside the container
-      - name: Install building tools (Native Arch)
-        run: |
-          echo "--- System Architecture (inside container) ---"
-          uname -m
-          echo "--- Installing tools ---"
-          # Set DEBIAN_FRONTEND to noninteractive if using Debian/Ubuntu based images
-          # export DEBIAN_FRONTEND=noninteractive
-          # For RHEL/AlmaLinux/CentOS based (like manylinux):
-          dnf update -y --setopt=tsflags=nodocs
-          dnf install -y epel-release || echo "EPEL already installed or enable failed, continuing..."
-          # Install GCC Toolset 12
-          dnf install -y gcc-toolset-12-gcc gcc-toolset-12-gcc-c++ gcc-toolset-12-binutils
-          # Install other required tools
-          dnf install -y make git python3 python3-pip nasm ccache
-          # Install Node.js
-          curl -fsSL https://rpm.nodesource.com/setup_21.x | bash -
-          dnf install -y nodejs
-          # Clean up dnf cache
-          dnf clean all
-          rm -rf /var/cache/dnf
-          echo "--- Tool installation complete ---"
+      # STEP 4: Install tools and Build (conditional execution)
 
-      # STEP 5: Run the build script
-      - name: Run the script (Native Arch)
-        shell: scl enable gcc-toolset-12 -- bash {0}
+      # AMD64 Native Path (using SCL directly on host if needed, or inside a native container if preferred)
+      # For simplicity, let's assume amd64 can also run inside its container like before.
+      # We could simplify further and run amd64 natively on the host if toolsets allow.
+      # Let's keep it consistent and use containers for both.
+
+      - name: Build (amd64 Native Container)
+        if: matrix.use_docker == false
+        uses: docker://quay.io/pypa/manylinux_2_28_${{ matrix.manylinux_arch }}
+        with:
+          entrypoint: /bin/bash
+          args: -ec |
+            echo "--- Running inside amd64 container ---"
+            uname -m
+            dnf update -y --setopt=tsflags=nodocs
+            dnf install -y epel-release || echo "EPEL failed, continuing..."
+            dnf install -y gcc-toolset-12-gcc gcc-toolset-12-gcc-c++ gcc-toolset-12-binutils make git python3 python3-pip nasm ccache curl
+            curl -fsSL https://rpm.nodesource.com/setup_21.x | bash -
+            dnf install -y nodejs
+            dnf clean all
+            rm -rf /var/cache/dnf
+
+            echo "--- Enabling SCL and running build ---"
+            export ARCH=${{ matrix.arch }}
+            export CC="gcc"
+            export CXX="g++"
+            export CFLAGS="-O2 -fPIC"
+            export CXXFLAGS="-O2 -fPIC -Wno-error=deprecated-declarations"
+            export LDFLAGS="-Wl,--as-needed"
+            export CCACHE_COMPRESS="true"
+            # Note: GITHUB_WORKSPACE is mounted at /github/workspace by default in docker:// usage
+            export CCACHE_BASEDIR="/github/workspace"
+            export CCACHE_DIR="/github/workspace/.ccache"
+            export CCACHE_MAXSIZE="5G"
+
+            mkdir -p "$CCACHE_DIR"
+            export PATH="/usr/lib64/ccache:$PATH"
+
+            ccache -z
+            ccache -s
+            echo "Compiler versions:"
+            scl enable gcc-toolset-12 -- bash -ec 'gcc --version; g++ --version; which gcc; which g++'
+            echo "PATH: $PATH"
+            echo "Starting build..."
+            scl enable gcc-toolset-12 -- bash -ec 'node index.js'
+            echo "Build finished."
+            ccache -s
+
+            echo "--- Creating archive ---"
+            cd /github/workspace/node/out/Release || exit 1
+            SO_FILE=$(ls libnode.so.* | head -n 1) || exit 1
+            ln -sf "$SO_FILE" libnode.so
+            tar -cvJf "/github/workspace/libnode-${{ matrix.arch }}-linux.tar.xz" libnode.so "$SO_FILE" node
+            echo "Archive created at /github/workspace/libnode-${{ matrix.arch }}-linux.tar.xz"
+            ls -l "/github/workspace/libnode-${{ matrix.arch }}-linux.tar.xz"
+
+      - name: Build (arm64 Emulated via Docker)
+        if: matrix.use_docker == true
         env:
+          # Pass necessary variables to the docker run command environment
           ARCH: ${{ matrix.arch }}
           CC: "gcc"
           CXX: "g++"
           CFLAGS: "-O2 -fPIC"
           CXXFLAGS: "-O2 -fPIC -Wno-error=deprecated-declarations"
           LDFLAGS: "-Wl,--as-needed"
-          # CCACHE setup
           CCACHE_COMPRESS: "true"
-          CCACHE_BASEDIR: "${GITHUB_WORKSPACE}" # Use Actions variable
-          CCACHE_DIR: "${GITHUB_WORKSPACE}/.ccache" # Use Actions variable
-          # Increase verbosity for ccache
-          CCACHE_DEBUG: "1"
-          # Set cache size
+          # These need to point to paths INSIDE the container
+          CCACHE_BASEDIR: "/workspace"
+          CCACHE_DIR: "/workspace/.ccache"
           CCACHE_MAXSIZE: "5G"
+          DEBIAN_FRONTEND: noninteractive # Good practice even if not Debian
         run: |
-          echo "--- Environment ---"
-          printenv
-          echo "--- System Architecture (inside container) ---"
-          uname -m
-          echo "--- Verifying Compiler Versions (within SCL) ---"
-          which gcc
-          ${CC} --version
-          which g++
-          ${CXX} --version
-          echo "--- CCACHE Setup ---"
-          # Ensure ccache directory exists (should be created by cache action)
-          mkdir -p "$CCACHE_DIR"
-          # Prepend ccache wrapper directory to the PATH
-          export PATH="/usr/lib64/ccache:$PATH"
-          # Verify ccache is found
-          which ccache
-          ccache --version
-          # Link compilers for ccache (optional but good practice if CC/CXX are not just 'gcc'/'g++')
-          # ln -s /usr/bin/ccache /usr/local/bin/gcc
-          # ln -s /usr/bin/ccache /usr/local/bin/g++
-          # export PATH="/usr/local/bin:$PATH"
+          echo "--- Starting Docker container for ARM64 build ---"
+          docker run --rm \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            -e ARCH \
+            -e CC \
+            -e CXX \
+            -e CFLAGS \
+            -e CXXFLAGS \
+            -e LDFLAGS \
+            -e CCACHE_COMPRESS \
+            -e CCACHE_BASEDIR \
+            -e CCACHE_DIR \
+            -e CCACHE_MAXSIZE \
+            -e DEBIAN_FRONTEND \
+            quay.io/pypa/manylinux_2_28_${{ matrix.manylinux_arch }} \
+            bash -ec '
+              echo "--- Running inside arm64 container ---"
+              uname -m
+              dnf update -y --setopt=tsflags=nodocs
+              dnf install -y epel-release || echo "EPEL failed, continuing..."
+              dnf install -y gcc-toolset-12-gcc gcc-toolset-12-gcc-c++ gcc-toolset-12-binutils make git python3 python3-pip nasm ccache curl
+              curl -fsSL https://rpm.nodesource.com/setup_21.x | bash -
+              dnf install -y nodejs
+              dnf clean all
+              rm -rf /var/cache/dnf
 
-          echo "PATH is: $PATH"
-          echo "Building for ARCH: $ARCH"
-          echo "Using CC: $(which ${CC})"
-          echo "Using CXX: $(which ${CXX})"
+              echo "--- Enabling SCL and running build ---"
+              mkdir -p "$CCACHE_DIR" # Ensure cache dir exists inside container
+              export PATH="/usr/lib64/ccache:$PATH"
 
-          ccache -z # Zero stats before build
-          ccache -s # Print stats before build
+              ccache -z
+              ccache -s
+              echo "Compiler versions:"
+              scl enable gcc-toolset-12 -- bash -ec "gcc --version; g++ --version; which gcc; which g++"
+              echo "PATH: $PATH"
+              echo "Starting build..."
+              scl enable gcc-toolset-12 -- bash -ec "node index.js"
+              echo "Build finished."
+              ccache -s
 
-          # Run the build
-          echo "--- Starting Node.js build script ---"
-          node index.js
-          echo "--- Node.js build script finished ---"
+              echo "--- Creating archive ---"
+              # Workspace is mounted at /workspace
+              cd /workspace/node/out/Release || exit 1
+              SO_FILE=$(ls libnode.so.* | head -n 1) || exit 1
+              ln -sf "$SO_FILE" libnode.so
+              # Create archive directly in the mounted workspace directory
+              tar -cvJf "/workspace/libnode-${ARCH}-linux.tar.xz" libnode.so "$SO_FILE" node
+              echo "Archive created at /workspace/libnode-${ARCH}-linux.tar.xz"
+              ls -l "/workspace/libnode-${ARCH}-linux.tar.xz"
+            ' # End of bash -ec block for docker run
 
-          ccache -s # Print stats after build
-
-      # STEP 6: Create archive
-      - name: Create archive
-        run: |
-          echo "--- Creating archive ---"
-          cd node/out/Release
-          ls -l # List files for debugging
-          SO_FILE=$(ls libnode.so.* | head -n 1)
-          if [ -z "$SO_FILE" ]; then
-            echo "Error: Could not find libnode.so.* file!"
-            # Try listing again in case of timing issue
-            sleep 2
-            ls -l
-            SO_FILE=$(ls libnode.so.* | head -n 1)
-            if [ -z "$SO_FILE" ]; then
-               exit 1
-            fi
-          fi
-          echo "Found SO file: $SO_FILE"
-          # Create symlink libnode.so -> libnode.so.XXX
-          ln -sf "$SO_FILE" libnode.so
-          # Create archive containing the symlink, the actual .so file, and the node executable
-          tar -cvJf "libnode-${{ matrix.arch }}-linux.tar.xz" libnode.so "$SO_FILE" node
-          echo "Created archive libnode-${{ matrix.arch }}-linux.tar.xz"
-          ls -l libnode-${{ matrix.arch }}-linux.tar.xz # Verify archive exists
-
-      # STEP 7: Upload binaries
+      # STEP 5: Upload (runs on host, file is in the workspace)
       - name: Upload binaries to release
         uses: svenstaro/upload-release-action@v2
         with:
           overwrite: true
           tag: ${{ github.ref }}
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: node/out/Release/libnode-${{ matrix.arch }}-linux.tar.xz
-          file_glob: false # Use specific file name
+          # File path is relative to GITHUB_WORKSPACE on the host
+          file: libnode-${{ matrix.arch }}-linux.tar.xz
+          file_glob: false
