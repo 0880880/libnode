@@ -31,46 +31,49 @@ jobs:
             ${{ github.workflow }}-${{ matrix.arch }}-
 
       - name: Install building tools (EL8)
+        # Running on AlmaLinux 8 or similar (RHEL 8 based)
         run: |
           dnf update -y
+          # Install EPEL (already installed according to logs, but good practice)
           dnf install -y epel-release
+          # Install GCC Toolset 11 for a modern compiler
           dnf install -y gcc-toolset-12-gcc gcc-toolset-12-gcc-c++ gcc-toolset-12-binutils
+          # Install other required tools
           dnf install -y make git python3 python3-pip nasm ccache
+          # Install Node.js
           curl -sL https://rpm.nodesource.com/setup_21.x | bash -
           dnf install -y nodejs
 
-          # Install cross-compilation tools for arm64 if building for arm64 on x86_64
+          # For cross-compiling to ARM64 if we're on x86_64
+          # Note: The default cross-compiler on EL8 might still be too old for C++20.
+          # Check its version after installation if the ARM build fails.
           if [ "${{ matrix.arch }}" = "arm64" ] && [ "$(uname -m)" = "x86_64" ]; then
-            echo "Installing aarch64 cross-compilation tools"
+            echo "Warning: Installing default aarch64 cross-compiler. Verify its version if ARM build fails."
             dnf install -y \
               binutils-aarch64-linux-gnu \
               gcc-aarch64-linux-gnu \
               gcc-c++-aarch64-linux-gnu
+
           fi
 
-      - name: Setup aarch64 sysroot
-        if: matrix.arch == 'arm64'
-        run: |
-          # Download glibc-devel for aarch64
-          dnf download --arch=aarch64 glibc-devel
-          # Create sysroot directory
-          mkdir -p /tmp/aarch64-sysroot
-          # Extract the RPM into the sysroot
-          rpm2cpio glibc-devel-*.aarch64.rpm | cpio -idmv -D /tmp/aarch64-sysroot
-
       - name: Run the script (EL8)
+        # Use scl enable with the correct toolset name for EL8
         shell: scl enable gcc-toolset-12 -- bash {0}
         env:
           ARCH: ${{ matrix.arch }}
           CC: "${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-gcc' || 'gcc' }}"
           CXX: "${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-g++' || 'g++' }}"
           CFLAGS: "-O2 -fPIC"
+          # ---> CRITICAL: Ensure -std=c++20 is NOT here <---
+          # ---> Include the fix for OpenSSL deprecation warnings <---
           CXXFLAGS: "-O2 -fPIC -Wno-error=deprecated-declarations"
           LDFLAGS: "-Wl,--as-needed"
+          # CCACHE setup
           CCACHE_COMPRESS: "true"
           CCACHE_BASEDIR: "$GITHUB_WORKSPACE"
           CCACHE_DIR: "$GITHUB_WORKSPACE/.ccache"
         run: |
+          # Verify the compiler version being used (should be GCC 11.x now for native)
           echo "--- Verifying Compiler Versions ---"
           which gcc
           ${CC} --version
@@ -78,20 +81,17 @@ jobs:
           ${CXX} --version
           echo "--- End Verification ---"
 
+          # Ensure ccache directory exists
           mkdir -p "$CCACHE_DIR"
+          # Prepend ccache to the PATH *within* the SCL environment
+          # Use the standard ccache path for EL8
           export PATH="/usr/lib64/ccache:$PATH"
 
           echo "PATH is: $PATH"
           echo "Using CC: $CC"
           echo "Using CXX: $CXX"
 
-          # Pass sysroot flag for arm64 builds
-          if [ "${{ matrix.arch }}" = "arm64" ]; then
-            SYSROOT_FLAG="--with-sysroot=/tmp/aarch64-sysroot"
-          else
-            SYSROOT_FLAG=""
-          fi
-          node index.js $SYSROOT_FLAG
+          node index.js
 
       - name: Create archive
         run: |
