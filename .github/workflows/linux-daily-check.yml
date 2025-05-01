@@ -52,11 +52,7 @@ jobs:
             dnf install -y \
               binutils-aarch64-linux-gnu \
               gcc-aarch64-linux-gnu \
-              gcc-c++-aarch64-linux-gnu \
-              glibc-headers.aarch64 \
-              glibc-devel.aarch64 \
-              kernel-headers.aarch64 \
-              libstdc++-devel.aarch64
+              gcc-c++-aarch64-linux-gnu
 
           fi
 
