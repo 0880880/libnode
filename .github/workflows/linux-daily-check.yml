@@ -55,11 +55,12 @@ jobs:
 
       - name: Build (amd64 Native Container)
         if: matrix.use_docker == false
-        # Use the specific x86_64 image because the 'if' condition guarantees this matrix combo
         uses: docker://quay.io/pypa/manylinux_2_28_x86_64
         with:
-          entrypoint: /bin/bash
-          args: -ec |
+          # Set the entrypoint to bash with the desired flags (-e: exit on error, -c: execute command string)
+          entrypoint: /bin/bash -ec
+          # The entire script is now the single argument passed to the entrypoint's -c flag
+          args: |
             echo "--- Running inside amd64 container ---"
             uname -m
             export DEBIAN_FRONTEND=noninteractive
@@ -72,7 +73,8 @@ jobs:
             rm -rf /var/cache/dnf
 
             echo "--- Enabling SCL and running build ---"
-            
+            # Inject matrix variables into the environment for the script
+            # Note: These are now set *within* the script executed by bash -ec
             export ARCH=${{ matrix.arch }}
             export CC="gcc"
             export CXX="g++"
@@ -80,7 +82,7 @@ jobs:
             export CXXFLAGS="-O2 -fPIC -Wno-error=deprecated-declarations"
             export LDFLAGS="-Wl,--as-needed"
             export CCACHE_COMPRESS="true"
-            
+            # Workspace is mounted at /github/workspace by default
             export CCACHE_BASEDIR="/github/workspace"
             export CCACHE_DIR="/github/workspace/.ccache"
             export CCACHE_MAXSIZE="5G"
@@ -92,7 +94,7 @@ jobs:
             ccache -s
             echo "Compiler versions:"
             scl enable gcc-toolset-12 -- bash -ec 'gcc --version; g++ --version; which gcc; which g++'
-            echo "PATH:$PATH"
+            echo "PATH: $PATH"
             echo "Starting build..."
             scl enable gcc-toolset-12 -- bash -ec 'node index.js'
             echo "Build finished."
@@ -106,7 +108,7 @@ jobs:
             tar -cvJf "/github/workspace/libnode-${ARCH}-linux.tar.xz" libnode.so "$SO_FILE" node
             echo "Archive created at /github/workspace/libnode-${ARCH}-linux.tar.xz"
             ls -l "/github/workspace/libnode-${ARCH}-linux.tar.xz"
-
+            
       - name: Build (arm64 Emulated via Docker)
         if: matrix.use_docker == true
         env:
