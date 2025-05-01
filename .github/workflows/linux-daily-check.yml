@@ -49,7 +49,7 @@ jobs:
           # Check its version after installation if the ARM build fails.
           if [ "${{ matrix.arch }}" = "arm64" ] && [ "$(uname -m)" = "x86_64" ]; then
             echo "Warning: Installing default aarch64 cross-compiler. Verify its version if ARM build fails."
-            sudo dnf install -y \
+            dnf install -y \
               binutils-aarch64-linux-gnu \
               gcc-aarch64-linux-gnu \
               gcc-c++-aarch64-linux-gnu \
