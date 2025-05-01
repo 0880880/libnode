@@ -31,43 +31,46 @@ jobs:
             ${{ github.workflow }}-${{ matrix.arch }}-
 
       - name: Install building tools (EL8)
-        # Running on AlmaLinux 8 or similar (RHEL 8 based)
         run: |
           dnf update -y
-          # Install EPEL
-          dnf install -y epel-release || true
+          # On standard EL8, enable EPEL first if needed (often is)
+          dnf install -y epel-release
           # Install core dnf plugins to get config-manager
           dnf install -y dnf-plugins-core
-          # Enable the CodeReady Builder (CRB) repository - often needed for -devel packages
+          # Enable the CodeReady Builder (CRB) repository
+          # *** This SHOULD work on standard almalinux:8 ***
           dnf config-manager --set-enabled crb
           echo "Enabled repositories:"
-          dnf repolist enabled # Optional: Check which repos are now enabled
+          dnf repolist enabled
 
-          # Install GCC Toolset 12 for a modern compiler (for host)
+          # Install GCC Toolset 12 (or a suitable system GCC/G++ if Toolset isn't strictly needed)
+          # Check available versions: dnf module list gcc-toolset
           dnf install -y gcc-toolset-12-gcc gcc-toolset-12-gcc-c++ gcc-toolset-12-binutils
           # Install other required tools
           dnf install -y make git python3 python3-pip nasm ccache
-          # Install Node.js (for host build process)
+          # Install Node.js
           curl -sL https://rpm.nodesource.com/setup_21.x | bash -
           dnf install -y nodejs
 
-          # For cross-compiling to ARM64 if we're on x86_64
+          # For cross-compiling to ARM64
           if [ "${{ matrix.arch }}" = "arm64" ] && [ "$(uname -m)" = "x86_64" ]; then
             echo "Installing aarch64 cross-compiler and development libraries..."
-            # Retry installing cross-compiler tools AND the target's standard library development files
-            # Now that 'crb' repo is enabled, these might be found
+            # Install cross-compiler tools AND the target's standard library development files
+            # These should now be found in the enabled 'crb' or base/appstream repos
             dnf install -y \
               binutils-aarch64-linux-gnu \
               gcc-aarch64-linux-gnu \
               gcc-c++-aarch64-linux-gnu \
               glibc-devel.aarch64 \
               libstdc++-devel.aarch64
-
-            # Optional: Check cross-compiler version if needed
-            echo "--- Verifying Cross-Compiler Version ---"
-            aarch64-linux-gnu-gcc --version
-            aarch64-linux-gnu-g++ --version
-            echo "--- End Verification ---"
+            # Error handling: Check if install succeeded
+            if [ $? -ne 0 ]; then
+              echo "Error: Failed to install aarch64 cross-dev packages."
+              echo "Searching for packages..."
+              dnf search glibc-devel | grep aarch64
+              dnf search libstdc++-devel | grep aarch64
+              exit 1
+            fi
           fi
 
       - name: Run the script (EL8)
