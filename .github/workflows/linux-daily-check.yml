@@ -77,7 +77,6 @@ jobs:
             export CXXFLAGS="-O2 -fPIC -Wno-error=deprecated-declarations"
             export LDFLAGS="-Wl,--as-needed"
             export CCACHE_COMPRESS="true"
-            # Note: GITHUB_WORKSPACE is mounted at /github/workspace by default in docker:// usage
             export CCACHE_BASEDIR="/github/workspace"
             export CCACHE_DIR="/github/workspace/.ccache"
             export CCACHE_MAXSIZE="5G"
