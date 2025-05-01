@@ -52,7 +52,15 @@ jobs:
             dnf install -y \
               binutils-aarch64-linux-gnu \
               gcc-aarch64-linux-gnu \
-              gcc-c++-aarch64-linux-gnu
+              gcc-c++-aarch64-linux-gnu \
+              glibc-devel.aarch64 \
+              libstdc++-devel.aarch64 # <-- ADD THESE LINES
+
+            # Optional: Check cross-compiler version if needed
+            echo "--- Verifying Cross-Compiler Version ---"
+            aarch64-linux-gnu-gcc --version
+            aarch64-linux-gnu-g++ --version
+            echo "--- End Verification ---"
 
           fi
 
