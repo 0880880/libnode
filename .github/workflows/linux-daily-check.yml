@@ -53,61 +53,80 @@ jobs:
       # We could simplify further and run amd64 natively on the host if toolsets allow.
       # Let's keep it consistent and use containers for both.
 
-      - name: Build (amd64 Native Container)
-        if: matrix.use_docker == false
-        uses: docker://quay.io/pypa/manylinux_2_28_x86_64
-        with:
-          # Set the entrypoint to bash with the desired flags (-e: exit on error, -c: execute command string)
-          entrypoint: /bin/bash -ec
-          # The entire script is now the single argument passed to the entrypoint's -c flag
-          args: |
-            echo "--- Running inside amd64 container ---"
-            uname -m
-            export DEBIAN_FRONTEND=noninteractive
-            dnf update -y --setopt=tsflags=nodocs
-            dnf install -y epel-release || echo "EPEL failed, continuing..."
-            dnf install -y gcc-toolset-12-gcc gcc-toolset-12-gcc-c++ gcc-toolset-12-binutils make git python3 python3-pip nasm ccache curl
-            curl -fsSL https://rpm.nodesource.com/setup_21.x | bash -
-            dnf install -y nodejs
-            dnf clean all
-            rm -rf /var/cache/dnf
+      - name: Build (amd64 via Docker) # Changed name for clarity
+        if: matrix.use_docker == false # Keep the original condition
+        env: # Define env vars like in the arm64 step
+          ARCH: ${{ matrix.arch }}
+          CC: "gcc"
+          CXX: "g++"
+          CFLAGS: "-O2 -fPIC"
+          CXXFLAGS: "-O2 -fPIC -Wno-error=deprecated-declarations"
+          LDFLAGS: "-Wl,--as-needed"
+          CCACHE_COMPRESS: "true"
+          # Use /workspace consistently
+          CCACHE_BASEDIR: "/workspace"
+          CCACHE_DIR: "/workspace/.ccache"
+          CCACHE_MAXSIZE: "5G"
+          DEBIAN_FRONTEND: noninteractive
+          DOCKER_IMAGE: quay.io/pypa/manylinux_2_28_x86_64 # Define image name
+        run: |
+          echo "--- Starting Docker container for AMD64 build ---"
+          echo "Using image: $DOCKER_IMAGE"
+          docker run --rm \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            -e ARCH \
+            -e CC \
+            -e CXX \
+            -e CFLAGS \
+            -e CXXFLAGS \
+            -e LDFLAGS \
+            -e CCACHE_COMPRESS \
+            -e CCACHE_BASEDIR \
+            -e CCACHE_DIR \
+            -e CCACHE_MAXSIZE \
+            -e DEBIAN_FRONTEND \
+            "$DOCKER_IMAGE" \
+            bash -ec ' # Correctly invoke bash with -ec and the script as a single argument
+              echo "--- Running inside amd64 container ---"
+              uname -m
+              # DEBIAN_FRONTEND is already set via -e
+              dnf update -y --setopt=tsflags=nodocs
+              dnf install -y epel-release || echo "EPEL failed, continuing..."
+              dnf install -y gcc-toolset-12-gcc gcc-toolset-12-gcc-c++ gcc-toolset-12-binutils make git python3 python3-pip nasm ccache curl
+              curl -fsSL https://rpm.nodesource.com/setup_21.x | bash -
+              dnf install -y nodejs
+              dnf clean all
+              rm -rf /var/cache/dnf
 
-            echo "--- Enabling SCL and running build ---"
-            # Inject matrix variables into the environment for the script
-            # Note: These are now set *within* the script executed by bash -ec
-            export ARCH=${{ matrix.arch }}
-            export CC="gcc"
-            export CXX="g++"
-            export CFLAGS="-O2 -fPIC"
-            export CXXFLAGS="-O2 -fPIC -Wno-error=deprecated-declarations"
-            export LDFLAGS="-Wl,--as-needed"
-            export CCACHE_COMPRESS="true"
-            # Workspace is mounted at /github/workspace by default
-            export CCACHE_BASEDIR="/github/workspace"
-            export CCACHE_DIR="/github/workspace/.ccache"
-            export CCACHE_MAXSIZE="5G"
+              echo "--- Enabling SCL and running build ---"
+              # Env vars ARCH, CC, CXX, etc are inherited via -e flags in docker run
 
-            mkdir -p "$CCACHE_DIR"
-            export PATH="/usr/lib64/ccache:$PATH"
+              # Ensure cache dir exists inside container (use variable)
+              mkdir -p "$CCACHE_DIR"
+              export PATH="/usr/lib64/ccache:$PATH"
 
-            ccache -z
-            ccache -s
-            echo "Compiler versions:"
-            scl enable gcc-toolset-12 -- bash -ec 'gcc --version; g++ --version; which gcc; which g++'
-            echo "PATH: $PATH"
-            echo "Starting build..."
-            scl enable gcc-toolset-12 -- bash -ec 'node index.js'
-            echo "Build finished."
-            ccache -s
+              ccache -z
+              ccache -s
+              echo "Compiler versions:"
+              scl enable gcc-toolset-12 -- bash -ec "gcc --version; g++ --version; which gcc; which g++"
+              echo "PATH: $PATH"
+              echo "Starting build..."
+              scl enable gcc-toolset-12 -- bash -ec "node index.js"
+              echo "Build finished."
+              ccache -s
 
-            echo "--- Creating archive ---"
-            cd /github/workspace/node/out/Release || exit 1
-            SO_FILE=$(ls libnode.so.* | head -n 1) || exit 1
-            echo "Found SO file:$SO_FILE"
-            ln -sf "$SO_FILE" libnode.so
-            tar -cvJf "/github/workspace/libnode-${ARCH}-linux.tar.xz" libnode.so "$SO_FILE" node
-            echo "Archive created at /github/workspace/libnode-${ARCH}-linux.tar.xz"
-            ls -l "/github/workspace/libnode-${ARCH}-linux.tar.xz"
+              echo "--- Creating archive ---"
+              # Use /workspace based on the volume mount
+              cd /workspace/node/out/Release || exit 1
+              SO_FILE=$(ls libnode.so.* | head -n 1) || exit 1
+              echo "Found SO file:$SO_FILE"
+              ln -sf "$SO_FILE" libnode.so
+              # Create archive directly in the mounted workspace directory
+              tar -cvJf "/workspace/libnode-${ARCH}-linux.tar.xz" libnode.so "$SO_FILE" node
+              echo "Archive created at /workspace/libnode-${ARCH}-linux.tar.xz"
+              ls -l "/workspace/libnode-${ARCH}-linux.tar.xz"
+            ' # End of bash -ec script block
             
       - name: Build (arm64 Emulated via Docker)
         if: matrix.use_docker == true
