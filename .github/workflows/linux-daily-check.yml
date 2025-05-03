@@ -9,7 +9,6 @@ on:
 jobs:
   update:
     # Always run the job orchestration on ubuntu-latest
-    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -18,19 +17,22 @@ jobs:
           - arch: amd64
             manylinux_arch: x86_64
             use_docker: false # Flag to indicate if explicit docker is needed
+            runs_on: ubuntu-latest
           - arch: arm64
             manylinux_arch: aarch64
             use_docker: true # Flag to indicate if explicit docker is needed
+            runs_on: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runs_on }}
 
     # NO top-level container definition here
 
     steps:
       # STEP 1: Set up QEMU (only needed for the ARM build running on x86_64 host)
-      - name: Set up QEMU
-        if: matrix.use_docker == true # Only if we need emulation
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
+      #- name: Set up QEMU
+      #  if: matrix.use_docker == true # Only if we need emulation
+      #  uses: docker/setup-qemu-action@v3
+      #  with:
+      #    platforms: arm64
 
       # STEP 2: Checkout code (runs on the host runner)
       - uses: actions/checkout@v4
