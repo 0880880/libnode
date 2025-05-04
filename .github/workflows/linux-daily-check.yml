@@ -70,7 +70,7 @@ jobs:
           CCACHE_DIR: "/workspace/.ccache"
           CCACHE_MAXSIZE: "5G"
           DEBIAN_FRONTEND: noninteractive
-          DOCKER_IMAGE: quay.io/pypa/manylinux_2_28_x86_64 # Define image name
+          DOCKER_IMAGE: quay.io/pypa/manylinux_2_39_x86_64 # Define image name
         run: |
           echo "--- Starting Docker container for AMD64 build ---"
           echo "Using image: $DOCKER_IMAGE"
@@ -146,7 +146,7 @@ jobs:
           CCACHE_MAXSIZE: "5G"
           DEBIAN_FRONTEND: noninteractive
           # Explicitly define the Docker image name in the environment
-          DOCKER_IMAGE: quay.io/pypa/manylinux_2_28_${{ matrix.manylinux_arch }}
+          DOCKER_IMAGE: quay.io/pypa/manylinux_2_39_${{ matrix.manylinux_arch }}
         run: |
           echo "--- Starting Docker container for ARM64 build ---"
           echo "Using image: $DOCKER_IMAGE" # Debugging line
